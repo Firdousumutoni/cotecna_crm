@@ -1,6 +1,7 @@
 <?php
 // public/index.php
 require_once '../config/database.php';
+require_once '../includes/functions.php';
 
 session_start();
 
@@ -30,6 +31,23 @@ switch ($page) {
         $pageTitle = 'Inspections';
         $content = '../templates/inspections.php';
         break;
+    case 'interactions':
+        $pageTitle = 'Interactions';
+        $content = '../templates/interactions.php';
+        break;
+    case 'deals':
+        $pageTitle = 'Deals Pipeline';
+        $content = '../templates/deals.php';
+        break;
+    case 'invoices':
+        $pageTitle = 'Invoicing';
+        $content = '../templates/invoices.php';
+        break;
+    case 'receipt':
+        // Direct render for receipt, no layout
+        include '../templates/receipt.php';
+        exit;
+        break;
     case 'reports':
         $pageTitle = 'Reports';
         $content = '../templates/reports.php';
@@ -37,6 +55,14 @@ switch ($page) {
     case 'settings':
         $pageTitle = 'Settings';
         $content = '../templates/settings.php';
+        break;
+    case 'notifications':
+        $pageTitle = 'Notifications';
+        $content = '../templates/notifications.php';
+        break;
+    case 'certificates':
+        $pageTitle = 'Certificates';
+        $content = '../templates/certificates.php';
         break;
     default:
         $pageTitle = 'Dashboard';
@@ -47,7 +73,8 @@ switch ($page) {
 include '../templates/header.php';
 
 if (file_exists($content)) {
-    include $content;
+    // Content is already included inside header.php (which acts as layout wrapper)
+    // include $content; 
 } else {
     echo "<div class='glass-panel' style='padding:20px;'><h2>Page not found</h2><p>The page <strong>$page</strong> is under construction.</p></div>";
 }
