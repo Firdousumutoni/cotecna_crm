@@ -1,84 +1,77 @@
 <?php
-// Handle UPDATE actions
+// Handle UPDATE/CREATE actions
+require_once __DIR__ . '/../includes/auth.php';
+
+$ALLOWED_STATUSES   = ['scheduled', 'in_progress', 'completed', 'certified', 'rejected', 'delayed'];
+$ALLOWED_CATEGORIES = ['Agriculture', 'Minerals & Metals', 'Consumer Goods', 'Logistics', 'Government', 'Food Safety', 'Oil & Gas', 'Other'];
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_inspection'])) {
     try {
-        $stmt = $pdo->prepare("UPDATE inspections SET location = ?, status = ?, notes = ?, inspector_name = ?, inspection_date = ? WHERE id = ?");
-        $stmt->execute([
-            $_POST['location'],
-            $_POST['status'],
-            $_POST['notes'],
-            $_POST['inspector_name'],
-            $_POST['inspection_date'],
-            $_POST['inspection_id']
-        ]);
-        // Auto-Create Invoice if Completed/Certified
-        if (in_array($_POST['status'], ['completed', 'certified'])) {
-            // Check if invoice already exists
+        $insp_id   = filter_var($_POST['inspection_id'] ?? '', FILTER_VALIDATE_INT);
+        if (!$insp_id) throw new InvalidArgumentException("Invalid inspection reference.");
+        $location  = validate_text($_POST['location'] ?? '', 'Location', 200);
+        $status    = validate_whitelist(trim($_POST['status'] ?? ''), $ALLOWED_STATUSES, 'Status');
+        $notes     = validate_text($_POST['notes'] ?? '', 'Notes', 1000, false);
+        $inspector = validate_text($_POST['inspector_name'] ?? '', 'Inspector Name', 100);
+        $insp_date = validate_date($_POST['inspection_date'] ?? '', 'Inspection Date');
+
+        $stmt = $pdo->prepare("UPDATE inspections SET location=?, status=?, notes=?, inspector_name=?, inspection_date=? WHERE id=?");
+        $stmt->execute([$location, $status, $notes, $inspector, $insp_date, $insp_id]);
+
+        if (in_array($status, ['completed', 'certified'])) {
             $chk = $pdo->prepare("SELECT COUNT(*) FROM invoices WHERE inspection_id = ?");
-            $chk->execute([$_POST['inspection_id']]);
-            
+            $chk->execute([$insp_id]);
             if ($chk->fetchColumn() == 0) {
-                // Fetch Deal Amount if linked
                 $amount = 0.00;
-                $inspId = $_POST['inspection_id'];
-                
-                // Get Deal ID from Inspection
                 $getDeal = $pdo->prepare("SELECT deal_id, product_name, client_id FROM inspections WHERE id = ?");
-                $getDeal->execute([$inspId]);
+                $getDeal->execute([$insp_id]);
                 $inspData = $getDeal->fetch();
-                
                 if ($inspData && $inspData['deal_id']) {
                     $getAmt = $pdo->prepare("SELECT amount FROM deals WHERE id = ?");
                     $getAmt->execute([$inspData['deal_id']]);
                     $amount = $getAmt->fetchColumn() ?: 0.00;
                 }
-
-                // Generate Invoice Number
                 $stmtNum = $pdo->query("SELECT MAX(id) FROM invoices");
                 $next_id = $stmtNum->fetchColumn() + 1;
                 $inv_num = 'INV-' . str_pad($next_id, 3, '0', STR_PAD_LEFT);
-
-                // Create Invoice
                 $stmtInv = $pdo->prepare("INSERT INTO invoices (invoice_number, client_id, description, amount, issue_date, due_date, status, inspection_id, is_sent) VALUES (?, ?, ?, ?, ?, ?, 'Pending', ?, 0)");
-                $stmtInv->execute([
-                    $inv_num,
-                    $inspData['client_id'],
-                    'Invoice for Inspection: ' . $inspData['product_name'],
-                    $amount,
-                    date('Y-m-d'), // Issue Date
-                    date('Y-m-d', strtotime('+30 days')), // Due Date
-                    $inspId
-                ]);
-                echo "<script>alert('Inspection updated & Invoice generated automatically!'); window.location='index.php?page=inspections';</script>";
-                exit; // Stop further execution
+                $stmtInv->execute([$inv_num, $inspData['client_id'], 'Invoice for Inspection: '.$inspData['product_name'], $amount, date('Y-m-d'), date('Y-m-d', strtotime('+30 days')), $insp_id]);
+                echo "<script>alert('Inspection updated & Invoice generated!'); window.location='index.php?page=inspections';</script>";
+                exit;
             }
         }
-
         echo "<script>alert('Inspection updated successfully!'); window.location='index.php?page=inspections';</script>";
+    } catch (InvalidArgumentException $e) {
+        echo "<script>alert('" . addslashes($e->getMessage()) . "'); window.history.back();</script>"; exit;
     } catch (PDOException $e) {
-        $error = "Error updating: " . $e->getMessage();
+        error_log("Inspections Update Error: " . $e->getMessage());
+        echo "<script>alert('Database error. Please try again.'); window.history.back();</script>"; exit;
     }
 }
 
 // Handle CREATE actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_inspection'])) {
     try {
+        $client_id = filter_var($_POST['client_id'] ?? '', FILTER_VALIDATE_INT);
+        if (!$client_id) throw new InvalidArgumentException("Please select a valid Client.");
+        $product   = validate_text($_POST['product_name'] ?? '', 'Product Name', 150);
+        $category  = validate_whitelist(trim($_POST['category'] ?? ''), $ALLOWED_CATEGORIES, 'Category');
+        $insp_date = validate_date($_POST['inspection_date'] ?? '', 'Inspection Date');
+        $status    = validate_whitelist(trim($_POST['status'] ?? 'scheduled'), $ALLOWED_STATUSES, 'Status');
+        $inspector = validate_text($_POST['inspector_name'] ?? '', 'Inspector Name', 100);
+        $location  = validate_text($_POST['location'] ?? '', 'Location', 200);
+        $notes     = validate_text($_POST['notes'] ?? '', 'Notes', 1000, false);
+        $deal_id   = !empty($_POST['deal_id']) ? filter_var($_POST['deal_id'], FILTER_VALIDATE_INT) : null;
+        $order_num = validate_text($_POST['order_number'] ?? '', 'Order Number', 50, false);
+
         $stmt = $pdo->prepare("INSERT INTO inspections (client_id, product_name, category, inspection_date, status, inspector_name, location, notes, deal_id, order_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->execute([
-            $_POST['client_id'],
-            $_POST['product_name'],
-            $_POST['category'],
-            $_POST['inspection_date'],
-            $_POST['status'],
-            $_POST['inspector_name'],
-            $_POST['location'],
-            $_POST['notes'],
-            !empty($_POST['deal_id']) ? $_POST['deal_id'] : null,
-            $_POST['order_number'] ?? null
-        ]);
+        $stmt->execute([$client_id, $product, $category, $insp_date, $status, $inspector, $location, $notes, $deal_id, $order_num ?: null]);
         echo "<script>alert('New Inspection created successfully!'); window.location='index.php?page=inspections';</script>";
+    } catch (InvalidArgumentException $e) {
+        echo "<script>alert('" . addslashes($e->getMessage()) . "'); window.history.back();</script>"; exit;
     } catch (PDOException $e) {
-        $error = "Error creating: " . $e->getMessage();
+        error_log("Inspections Create Error: " . $e->getMessage());
+        echo "<script>alert('Database error. Please try again.'); window.history.back();</script>"; exit;
     }
 }
 

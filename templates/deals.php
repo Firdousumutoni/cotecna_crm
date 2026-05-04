@@ -1,63 +1,67 @@
 <?php
-// Handle Add Deal
+// Handle Add/Update Deal
+require_once __DIR__ . '/../includes/auth.php';
+
 $success_msg = '';
-$error_msg = '';
+$error_msg   = '';
+
+$ALLOWED_STAGES = ['Lead', 'Negotiation', 'Proposal', 'Closed Won', 'Closed Lost'];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_deal'])) {
     try {
+        $deal_name   = validate_text($_POST['deal_name'] ?? '', 'Deal Name', 150);
+        $client_id   = filter_var($_POST['client_id'] ?? '', FILTER_VALIDATE_INT);
+        if (!$client_id) throw new InvalidArgumentException("Please select a valid Client.");
+        $amount      = validate_number($_POST['amount'] ?? '', 'Deal Amount');
+        $stage       = validate_whitelist(trim($_POST['stage'] ?? ''), $ALLOWED_STAGES, 'Stage');
+        $close_date  = validate_date($_POST['expected_close_date'] ?? '', 'Expected Close Date', false);
+        $description = validate_text($_POST['description'] ?? '', 'Description', 500, false);
+
+        $prob = ($stage === 'Closed Won') ? 100 : (($stage === 'Closed Lost') ? 0 : 50);
+
         $stmt = $pdo->prepare("INSERT INTO deals (client_id, deal_name, amount, stage, expected_close_date, description, probability) VALUES (?, ?, ?, ?, ?, ?, ?)");
-        $stmt->execute([
-            $_POST['client_id'],
-            $_POST['deal_name'],
-            $_POST['amount'],
-            $_POST['stage'],
-            $_POST['expected_close_date'] ?: NULL,
-            $_POST['description'] ?? '',
-            $_POST['stage'] == 'Closed Won' ? 100 : ($_POST['stage'] == 'Closed Lost' ? 0 : 50) // Simplified prob logic
-        ]);
+        $stmt->execute([$client_id, $deal_name, $amount, $stage, $close_date ?: NULL, $description, $prob]);
         $success_msg = "Deal added to pipeline!";
+    } catch (InvalidArgumentException $e) {
+        $error_msg = $e->getMessage();
     } catch (PDOException $e) {
-        $error_msg = "Error adding deal: " . $e->getMessage();
+        $error_msg = "Error adding deal. Please try again.";
+        error_log("Deals DB Error: " . $e->getMessage());
     }
 }
 
 // Handle Update Deal
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_deal'])) {
     try {
+        $deal_id     = filter_var($_POST['deal_id'] ?? '', FILTER_VALIDATE_INT);
+        if (!$deal_id) throw new InvalidArgumentException("Invalid deal reference.");
+        $deal_name   = validate_text($_POST['deal_name'] ?? '', 'Deal Name', 150);
+        $client_id   = filter_var($_POST['client_id'] ?? '', FILTER_VALIDATE_INT);
+        if (!$client_id) throw new InvalidArgumentException("Please select a valid Client.");
+        $amount      = validate_number($_POST['amount'] ?? '', 'Deal Amount');
+        $stage       = validate_whitelist(trim($_POST['stage'] ?? ''), $ALLOWED_STAGES, 'Stage');
+        $probability = filter_var($_POST['probability'] ?? 50, FILTER_VALIDATE_INT);
+        if ($probability === false || $probability < 0 || $probability > 100) {
+            throw new InvalidArgumentException("Probability must be a whole number between 0 and 100.");
+        }
+        $description = validate_text($_POST['description'] ?? '', 'Description', 500, false);
+        $close_date  = validate_date($_POST['expected_close_date'] ?? '', 'Expected Close Date', false);
+
         $stmt = $pdo->prepare("UPDATE deals SET deal_name = ?, client_id = ?, amount = ?, stage = ?, probability = ?, description = ?, expected_close_date = ? WHERE id = ?");
-        $stmt->execute([
-             $_POST['deal_name'],
-             $_POST['client_id'],
-             $_POST['amount'],
-             $_POST['stage'],
-             $_POST['probability'],
-             $_POST['description'],
-             $_POST['expected_close_date'] ?: NULL,
-             $_POST['deal_id']
-        ]);
+        $stmt->execute([$deal_name, $client_id, $amount, $stage, $probability, $description, $close_date ?: NULL, $deal_id]);
 
         // Auto-Create Inspection if Closed Won
-        if ($_POST['stage'] === 'Closed Won') {
-            // Check if inspection already exists for this deal
+        if ($stage === 'Closed Won') {
             $chk = $pdo->prepare("SELECT COUNT(*) FROM inspections WHERE deal_id = ?");
-            $chk->execute([$_POST['deal_id']]);
+            $chk->execute([$deal_id]);
             if ($chk->fetchColumn() == 0) {
-                // Fetch Client Sector
                 $stmtCl = $pdo->prepare("SELECT sector FROM clients WHERE id = ?");
-                $stmtCl->execute([$_POST['client_id']]);
+                $stmtCl->execute([$client_id]);
                 $clSector = $stmtCl->fetchColumn() ?: 'Other';
 
-                // Create Inspection
-                $insDate = $_POST['expected_close_date'] ?: date('Y-m-d', strtotime('+7 days'));
+                $insDate = $close_date ?: date('Y-m-d', strtotime('+7 days'));
                 $stmtIns = $pdo->prepare("INSERT INTO inspections (client_id, deal_id, product_name, category, inspection_date, status, inspector_name, location, notes) VALUES (?, ?, ?, ?, ?, 'Scheduled', 'Unassigned', 'TBD', ?)");
-                $stmtIns->execute([
-                    $_POST['client_id'],
-                    $_POST['deal_id'],
-                    $_POST['deal_name'], // Product Name
-                    $clSector,           // Category inherited from Sector
-                    $insDate,
-                    'Auto-generated from Deal: ' . $_POST['deal_name']
-                ]);
+                $stmtIns->execute([$client_id, $deal_id, $deal_name, $clSector, $insDate, 'Auto-generated from Deal: ' . $deal_name]);
                 $success_msg = "Deal updated & Inspection scheduled automatically!";
             } else {
                 $success_msg = "Deal updated successfully!";
@@ -65,8 +69,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_deal'])) {
         } else {
             $success_msg = "Deal updated successfully!";
         }
+    } catch (InvalidArgumentException $e) {
+        $error_msg = $e->getMessage();
     } catch (PDOException $e) {
-        $error_msg = "Error updating deal: " . $e->getMessage();
+        $error_msg = "Error updating deal. Please try again.";
+        error_log("Deals Update DB Error: " . $e->getMessage());
     }
 }
 

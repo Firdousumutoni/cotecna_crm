@@ -1,44 +1,59 @@
 <?php
 session_start();
 require_once '../config/database.php';
+require_once '../includes/auth.php';
 
 $error = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $name = trim($_POST['name']);
-    $email = trim($_POST['email']);
-    $role = $_POST['role'];
-    $password = $_POST['password'];
-    $confirm_password = $_POST['confirm_password'];
+$ALLOWED_ROLES = ['admin', 'manager', 'voc', 'hr', 'finance', 'it', 'sales&marketing', 'staff'];
 
-    if ($password !== $confirm_password) {
-        $error = "Passwords do not match.";
-    } elseif (strlen($password) < 6) {
-        $error = "Password must be at least 6 characters.";
-    } else {
-        try {
-            // Check if email exists
-            $stmt = $pdo->prepare("SELECT COUNT(*) FROM users WHERE email = ?");
-            $stmt->execute([$email]);
-            if ($stmt->fetchColumn() > 0) {
-                $error = "Email is already registered.";
-            } else {
-                $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-                $stmt = $pdo->prepare("INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)");
-                $stmt->execute([$name, $email, $hashed_password, $role]);
-                
-                $_SESSION['success_msg'] = "Account created successfully! Please login.";
-                header("Location: login.php");
-                exit;
-            }
-        } catch (PDOException $e) {
-            $error = "Database error: " . $e->getMessage();
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        // --- Empty & Type Checks ---
+        $name     = validate_text($_POST['name'] ?? '', 'Full Name', 100);
+        $email    = validate_email($_POST['email'] ?? '', 'Email Address');
+        $role     = validate_whitelist(trim($_POST['role'] ?? ''), $ALLOWED_ROLES, 'Role');
+        $password = trim($_POST['password'] ?? '');
+        $confirm  = trim($_POST['confirm_password'] ?? '');
+
+        // --- Name: letters, spaces, hyphens, apostrophes only ---
+        if (!preg_match("/^[a-zA-Z\s'\-]{2,100}$/", $name)) {
+            throw new InvalidArgumentException("Full Name must contain letters only (2–100 characters). No special characters or numbers.");
         }
+
+        // --- Password strength ---
+        validate_password($password);
+        if ($password !== $confirm) {
+            throw new InvalidArgumentException("Passwords do not match. Please re-enter.");
+        }
+
+        // --- Check if email already registered ---
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM users WHERE email = ?");
+        $stmt->execute([$email]);
+        if ($stmt->fetchColumn() > 0) {
+            throw new InvalidArgumentException("This email address is already registered. Please use a different one.");
+        }
+
+        // --- All checks passed — create account ---
+        $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+        $stmt = $pdo->prepare("INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)");
+        $stmt->execute([$name, $email, $hashed_password, $role]);
+
+        $_SESSION['success_msg'] = "Account created successfully! Please login.";
+        header("Location: login.php");
+        exit;
+
+    } catch (InvalidArgumentException $e) {
+        $error = $e->getMessage();
+    } catch (PDOException $e) {
+        $error = "A database error occurred. Please try again.";
+        error_log("Register DB Error: " . $e->getMessage());
     }
 }
 ?>
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -46,10 +61,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link rel="stylesheet" href="assets/css/style.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
+
 <body>
 
     <div class="split-container">
-        
+
         <!-- Left Panel: Branding -->
         <div class="left-panel">
             <div class="brand-wrapper">
@@ -57,7 +73,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="logo-box">C</div>
                     <div class="logo-text">Cotecna<span style="color:#005eb8;">CRM</span></div>
                 </div>
-                
+
                 <p class="brand-desc">
                     Join the enterprise standard for inspection, testing, and certification management.
                 </p>
@@ -91,7 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endif; ?>
 
                 <form method="POST">
-                    
+
                     <div class="form-group">
                         <label class="form-label">Full Name</label>
                         <div class="form-input-group">
@@ -114,11 +130,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <i class="fa-solid fa-id-badge form-icon"></i>
                             <select name="role" class="form-select" required>
                                 <option value="" disabled selected>Select Your Role</option>
+                                <option value="admin">Admin</option>
                                 <option value="voc">VOC Officer</option>
                                 <option value="manager">Manager</option>
                                 <option value="it">IT Support</option>
                                 <option value="hr">HR Manager</option>
                                 <option value="finance">Finance</option>
+                                <option value="sales&marketing">Sales & Marketing</option>
                                 <option value="staff">Staff</option>
                             </select>
                         </div>
@@ -136,12 +154,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <label class="form-label">Confirm</label>
                             <div class="form-input-group">
                                 <i class="fa-solid fa-lock form-icon"></i>
-                                <input type="password" name="confirm_password" class="form-input" placeholder="••••••" required>
+                                <input type="password" name="confirm_password" class="form-input" placeholder="••••••"
+                                    required>
                             </div>
                         </div>
                     </div>
 
-                    <button type="submit" class="btn-submit">Create Account <i class="fa-solid fa-arrow-right" style="margin-left:8px;"></i></button>
+                    <button type="submit" class="btn-submit">Create Account <i class="fa-solid fa-arrow-right"
+                            style="margin-left:8px;"></i></button>
 
                 </form>
 
@@ -153,5 +173,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     </div>
 
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const alerts = document.querySelectorAll('.alert-error');
+            alerts.forEach(alert => {
+                setTimeout(() => {
+                    alert.style.transition = 'opacity 0.5s ease';
+                    alert.style.opacity = '0';
+                    setTimeout(() => alert.remove(), 500);
+                }, 3000);
+            });
+        });
+    </script>
 </body>
+
 </html>

@@ -1,45 +1,56 @@
 <?php
 // Handle Actions (Create, Update, Delete)
+require_once __DIR__ . '/../includes/auth.php';
+
 $success_msg = '';
-$error_msg = '';
+$error_msg   = '';
+
+$ALLOWED_SECTORS = ['Agriculture', 'Minerals & Metals', 'Consumer Goods', 'Logistics', 'Government', 'Food Safety', 'Oil & Gas', 'Other'];
+$ALLOWED_STATUSES = ['Active', 'Pending', 'Inactive'];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         // DELETE
         if (isset($_POST['delete_client'])) {
+            $client_id = filter_var($_POST['client_id'], FILTER_VALIDATE_INT);
+            if (!$client_id) throw new InvalidArgumentException("Invalid client reference.");
             $stmt = $pdo->prepare("DELETE FROM clients WHERE id = ?");
-            $stmt->execute([$_POST['client_id']]);
+            $stmt->execute([$client_id]);
             $success_msg = "Client deleted successfully.";
         }
         // UPDATE
         elseif (isset($_POST['update_client'])) {
+            $client_id = filter_var($_POST['client_id'], FILTER_VALIDATE_INT);
+            if (!$client_id) throw new InvalidArgumentException("Invalid client reference.");
+
+            $name    = validate_text($_POST['name'] ?? '', 'Client Name', 100);
+            $company = validate_text($_POST['company'] ?? '', 'Company Name', 100);
+            $email   = validate_email($_POST['email'] ?? '', 'Email');
+            $sector  = validate_whitelist(trim($_POST['sector'] ?? ''), $ALLOWED_SECTORS, 'Sector');
+            $revenue = validate_number($_POST['revenue'] ?? '', 'Revenue');
+            $status  = validate_whitelist(trim($_POST['status'] ?? 'Pending'), $ALLOWED_STATUSES, 'Status');
+
             $stmt = $pdo->prepare("UPDATE clients SET name=?, company=?, email=?, sector=?, revenue=?, status=? WHERE id=?");
-            $stmt->execute([
-                $_POST['name'],
-                $_POST['company'],
-                $_POST['email'],
-                $_POST['sector'],
-                $_POST['revenue'],
-                $_POST['status'] ?? 'Pending',
-                $_POST['client_id']
-            ]);
+            $stmt->execute([$name, $company, $email, $sector, $revenue, $status, $client_id]);
             $success_msg = "Client updated successfully.";
         }
         // CREATE
         elseif (isset($_POST['add_client'])) {
+            $name    = validate_text($_POST['name'] ?? '', 'Client Name', 100);
+            $company = validate_text($_POST['company'] ?? '', 'Company Name', 100);
+            $email   = validate_email($_POST['email'] ?? '', 'Email');
+            $sector  = validate_whitelist(trim($_POST['sector'] ?? ''), $ALLOWED_SECTORS, 'Sector');
+            $revenue = validate_number($_POST['revenue'] ?? '', 'Revenue');
+
             $stmt = $pdo->prepare("INSERT INTO clients (name, company, email, sector, revenue, status) VALUES (?, ?, ?, ?, ?, ?)");
-            $stmt->execute([
-                $_POST['name'],
-                $_POST['company'],
-                $_POST['email'],
-                $_POST['sector'],
-                $_POST['revenue'],
-                'Pending'
-            ]);
+            $stmt->execute([$name, $company, $email, $sector, $revenue, 'Pending']);
             $success_msg = "Client added successfully!";
         }
+    } catch (InvalidArgumentException $e) {
+        $error_msg = $e->getMessage();
     } catch (PDOException $e) {
-        $error_msg = "Operation failed: " . $e->getMessage();
+        $error_msg = "Operation failed. Please try again.";
+        error_log("Clients DB Error: " . $e->getMessage());
     }
 }
 

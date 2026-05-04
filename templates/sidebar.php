@@ -1,4 +1,10 @@
 <!-- templates/sidebar.php -->
+<?php
+// Sidebar: Role-Aware Navigation
+$_role = $_SESSION['user_role'] ?? 'staff';
+$_isAdmin   = ($_role === 'admin');
+$_isFinance = ($_role === 'finance');
+?>
 <div class="sidebar">
     <div class="sidebar-header">
         <div style="background:var(--brand-blue); width:32px; height:32px; border-radius:6px; display:flex; align-items:center; justify-content:center; color:white; font-weight:700;">C</div>
@@ -14,6 +20,7 @@
             <i class="fa-solid fa-gauge-high"></i> Dashboard
         </a>
         
+        <?php if (!$_isFinance): ?>
         <a href="index.php?page=clients" class="nav-item <?php echo ($page == 'clients') ? 'active' : ''; ?>">
             <i class="fa-solid fa-users"></i> Clients
         </a>
@@ -25,6 +32,7 @@
         <a href="index.php?page=deals" class="nav-item <?php echo ($page == 'deals') ? 'active' : ''; ?>">
             <i class="fa-solid fa-briefcase"></i> Deals
         </a>
+        <?php endif; ?>
         
         <a href="index.php?page=invoices" class="nav-item <?php echo ($page == 'invoices') ? 'active' : ''; ?>">
             <i class="fa-solid fa-file-invoice-dollar"></i> Invoices
@@ -36,13 +44,17 @@
             <i class="fa-solid fa-chart-pie"></i> Reports
         </a>
         
+        <?php if (!$_isFinance): ?>
         <a href="index.php?page=inspections" class="nav-item <?php echo ($page == 'inspections') ? 'active' : ''; ?>">
             <i class="fa-solid fa-clipboard-check"></i> Inspections
         </a>
-        
+        <?php endif; ?>
+
+        <?php if ($_isAdmin): ?>
         <a href="index.php?page=settings" class="nav-item <?php echo ($page == 'settings') ? 'active' : ''; ?>">
             <i class="fa-solid fa-gear"></i> Settings
         </a>
+        <?php endif; ?>
         
         <a href="index.php?page=certificates" class="nav-item <?php echo ($page == 'certificates') ? 'active' : ''; ?>">
             <i class="fa-solid fa-certificate"></i> Certificates
@@ -50,8 +62,13 @@
     </nav>
 
     <div style="padding:20px; border-top:1px solid rgba(255,255,255,0.1);">
+        <!-- Role Badge -->
+        <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">
+            <?php echo htmlspecialchars(strtoupper($_role)); ?>
+        </div>
         <a href="index.php?page=logout" style="color:#ef4444; text-decoration:none; display:flex; align-items:center; gap:10px; font-size:0.9rem;">
             <i class="fa-solid fa-arrow-right-from-bracket"></i> Sign Out
         </a>
     </div>
 </div>
+

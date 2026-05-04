@@ -1,93 +1,101 @@
 <?php
-// Handle Create Invoice
+// Handle Create/Update Invoice
+require_once __DIR__ . '/../includes/auth.php';
+
 $success_msg = '';
-$error_msg = '';
+$error_msg   = '';
+
+$ALLOWED_STATUSES = ['Pending', 'Paid', 'Overdue'];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_invoice'])) {
     try {
-        // Generate Invoice Number (Simple Auto-Increment Simulation for Demo)
+        $client_id   = filter_var($_POST['client_id'] ?? '', FILTER_VALIDATE_INT);
+        if (!$client_id) throw new InvalidArgumentException("Please select a valid Client.");
+        $description = validate_text($_POST['description'] ?? '', 'Description', 255);
+        $amount      = validate_number($_POST['amount'] ?? '', 'Amount');
+        $status      = validate_whitelist(trim($_POST['status'] ?? 'Pending'), $ALLOWED_STATUSES, 'Status');
+        $issue_date  = validate_date($_POST['issue_date'] ?? '', 'Issue Date');
+        $due_date    = validate_date($_POST['due_date'] ?? '', 'Due Date');
+        $insp_id     = !empty($_POST['inspection_id']) ? filter_var($_POST['inspection_id'], FILTER_VALIDATE_INT) : null;
+
         $stmt = $pdo->query("SELECT MAX(id) FROM invoices");
         $next_id = $stmt->fetchColumn() + 1;
         $inv_num = 'INV-' . str_pad($next_id, 3, '0', STR_PAD_LEFT);
 
         $stmt = $pdo->prepare("INSERT INTO invoices (invoice_number, client_id, description, amount, issue_date, due_date, status, inspection_id, is_sent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)");
-        $stmt->execute([
-            $inv_num,
-            $_POST['client_id'],
-            $_POST['description'],
-            $_POST['amount'],
-            $_POST['issue_date'],
-            $_POST['due_date'],
-            $_POST['status'],
-            !empty($_POST['inspection_id']) ? $_POST['inspection_id'] : null
-        ]);
+        $stmt->execute([$inv_num, $client_id, $description, $amount, $issue_date, $due_date, $status, $insp_id]);
         $success_msg = "Invoice generated successfully! ($inv_num)";
+    } catch (InvalidArgumentException $e) {
+        $error_msg = $e->getMessage();
     } catch (PDOException $e) {
-        $error_msg = "Error creating invoice: " . $e->getMessage();
+        $error_msg = "Error creating invoice. Please try again.";
+        error_log("Invoices Create Error: " . $e->getMessage());
     }
 }
 
 // Handle Update Invoice
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_invoice'])) {
     try {
-        $stmt = $pdo->prepare("UPDATE invoices SET client_id = ?, description = ?, amount = ?, status = ?, issue_date = ?, due_date = ? WHERE id = ?");
-        $stmt->execute([
-            $_POST['client_id'],
-            $_POST['description'],
-            $_POST['amount'],
-            $_POST['status'],
-            $_POST['issue_date'],
-            $_POST['due_date'],
-            $_POST['invoice_id']
-        ]);
+        $invoice_id  = filter_var($_POST['invoice_id'] ?? '', FILTER_VALIDATE_INT);
+        if (!$invoice_id) throw new InvalidArgumentException("Invalid invoice reference.");
+        $client_id   = filter_var($_POST['client_id'] ?? '', FILTER_VALIDATE_INT);
+        if (!$client_id) throw new InvalidArgumentException("Please select a valid Client.");
+        $description = validate_text($_POST['description'] ?? '', 'Description', 255);
+        $amount      = validate_number($_POST['amount'] ?? '', 'Amount');
+        $status      = validate_whitelist(trim($_POST['status'] ?? 'Pending'), $ALLOWED_STATUSES, 'Status');
+        $issue_date  = validate_date($_POST['issue_date'] ?? '', 'Issue Date');
+        $due_date    = validate_date($_POST['due_date'] ?? '', 'Due Date');
+
+        $stmt = $pdo->prepare("UPDATE invoices SET client_id=?, description=?, amount=?, status=?, issue_date=?, due_date=? WHERE id=?");
+        $stmt->execute([$client_id, $description, $amount, $status, $issue_date, $due_date, $invoice_id]);
         $success_msg = "Invoice updated successfully!";
+    } catch (InvalidArgumentException $e) {
+        $error_msg = $e->getMessage();
     } catch (PDOException $e) {
-        $error_msg = "Error updating invoice: " . $e->getMessage();
+        $error_msg = "Error updating invoice. Please try again.";
+        error_log("Invoices Update Error: " . $e->getMessage());
     }
 }
 
 // Handle Payment & Receipt Generation
 if (isset($_POST['pay_invoice'])) {
-    $inv_id = $_POST['invoice_id'];
-    $stmt = $pdo->prepare("UPDATE invoices SET status = 'Paid' WHERE id = ?");
-    $stmt->execute([$inv_id]);
-    
-    // Redirect to Receipt in new window? No, we need JS to open it. 
-    // We will set a flag to open it on load.
-    $receipt_id = $inv_id;
-    $success_msg = "Payment recorded. Generating receipt...";
-    
-    // Refresh data to show Paid status
-    // (Fetch logic below will pick this up)
+    $inv_id = filter_var($_POST['invoice_id'] ?? '', FILTER_VALIDATE_INT);
+    if ($inv_id) {
+        $stmt = $pdo->prepare("UPDATE invoices SET status = 'Paid' WHERE id = ?");
+        $stmt->execute([$inv_id]);
+        $receipt_id = $inv_id;
+        $success_msg = "Payment recorded. Generating receipt...";
+    }
 }
 
 // Handle Send Invoice
 if (isset($_POST['send_invoice'])) {
-    $inv_id = $_POST['invoice_id'];
-    $stmt = $pdo->prepare("UPDATE invoices SET is_sent = 1 WHERE id = ?");
-    $stmt->execute([$inv_id]);
-    $success_msg = "Invoice emailed to client successfully!";
+    $inv_id = filter_var($_POST['invoice_id'] ?? '', FILTER_VALIDATE_INT);
+    if ($inv_id) {
+        $stmt = $pdo->prepare("UPDATE invoices SET is_sent = 1 WHERE id = ?");
+        $stmt->execute([$inv_id]);
+        $success_msg = "Invoice emailed to client successfully!";
+    }
 }
 
 // Fetch Invoices
 $search = $_GET['search'] ?? '';
-$query = "SELECT i.*, c.company as client_company, c.email as client_email, c.phone as client_phone FROM invoices i JOIN clients c ON i.client_id = c.id WHERE 1=1";
+$query  = "SELECT i.*, c.company as client_company, c.email as client_email, c.phone as client_phone FROM invoices i JOIN clients c ON i.client_id = c.id WHERE 1=1";
 $params = [];
-
 if ($search) {
     $query .= " AND (i.invoice_number LIKE ? OR c.company LIKE ? OR i.description LIKE ?)";
     $params = array_fill(0, 3, "%$search%");
 }
-
 $query .= " ORDER BY i.created_at DESC";
 $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $invoices = $stmt->fetchAll();
 
-// Fetch Clients (kept same)
+// Fetch Clients
 $stmt = $pdo->query("SELECT id, name, company FROM clients ORDER BY company ASC");
 $clients_list = $stmt->fetchAll();
 ?>
+
 
 <div class="main-content">
     <!-- Header (kept same) -->

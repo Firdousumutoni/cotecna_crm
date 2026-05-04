@@ -1,5 +1,6 @@
 <?php
 // Handle POST Updates
+require_once __DIR__ . '/../includes/auth.php';
 $success_msg = '';
 $error_msg = '';
 
@@ -73,21 +74,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
             }
         }
 
-        // 2. Build Base SQL
-        // Check if email changed
-        $new_email = $_POST['email'];
+        // 2. Validate Profile Fields
+        $new_name  = validate_text($_POST['name'] ?? '', 'Full Name', 100);
+        if (!preg_match("/^[a-zA-Z\s'\-]{2,100}$/", $new_name)) {
+            throw new InvalidArgumentException("Full Name must contain letters only (2–100 characters).");
+        }
+        $new_email = validate_email($_POST['email'] ?? '', 'Email Address');
+        $new_phone = validate_phone($_POST['phone'] ?? '', 'Phone Number', false);
+        $job_title = validate_text($_POST['job_title'] ?? '', 'Job Title', 100, false);
+
+        // 3. Check email uniqueness
         if ($new_email !== $user['email']) {
-             $stmt = $pdo->prepare("SELECT id FROM users WHERE email = ? AND id != ?");
-             $stmt->execute([$new_email, $_SESSION['user_id']]);
-             if ($stmt->fetch()) {
-                 throw new Exception("Email already in use by another account.");
-             }
+            $stmt = $pdo->prepare("SELECT id FROM users WHERE email = ? AND id != ?");
+            $stmt->execute([$new_email, $_SESSION['user_id']]);
+            if ($stmt->fetch()) {
+                throw new InvalidArgumentException("This email address is already in use by another account.");
+            }
         }
 
         $sql = "UPDATE users SET name = ?, job_title = ?, phone = ?, email = ?" . $avatar_sql . $cover_sql . " WHERE id = ?";
         
-        // 3. Prepare Params
-        $final_params = [$_POST['name'], $_POST['job_title'], $_POST['phone'], $new_email];
+        // 4. Prepare Params
+        $final_params = [$new_name, $job_title, $new_phone, $new_email];
         if (!empty($params)) {
             $final_params = array_merge($final_params, $params);
         }
@@ -114,13 +122,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
 
 // Update Password (All Users)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_password'])) {
-    if ($_POST['new_password'] === $_POST['confirm_password']) {
-        $new_hash = password_hash($_POST['new_password'], PASSWORD_DEFAULT);
+    try {
+        $current_pw  = trim($_POST['current_password'] ?? '');
+        $new_pw      = trim($_POST['new_password'] ?? '');
+        $confirm_pw  = trim($_POST['confirm_password'] ?? '');
+
+        if ($current_pw === '') {
+            throw new InvalidArgumentException("Current password is required.");
+        }
+        if (!password_verify($current_pw, $user['password'])) {
+            throw new InvalidArgumentException("Current password is incorrect. Please try again.");
+        }
+        validate_password($new_pw);
+        if ($new_pw !== $confirm_pw) {
+            throw new InvalidArgumentException("New passwords do not match. Please re-enter.");
+        }
+
+        $new_hash = password_hash($new_pw, PASSWORD_DEFAULT);
         $stmt = $pdo->prepare("UPDATE users SET password = ? WHERE id = ?");
         $stmt->execute([$new_hash, $_SESSION['user_id']]);
         $success_msg = "Password changed successfully!";
-    } else {
-        $error_msg = "New passwords do not match.";
+    } catch (InvalidArgumentException $e) {
+        $error_msg = $e->getMessage();
     }
 }
 
